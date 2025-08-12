@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  # PostgreSQL + TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg14
+    container_name: bluetooth-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-bluetooth_heatmap}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bluetooth-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: bluetooth-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bluetooth-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: bluetooth-api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-bluetooth_heatmap}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./exports:/app/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - bluetooth-network
+
+  # Main Application (Scanner + Analysis)
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bluetooth-scanner
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-bluetooth_heatmap}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./exports:/app/exports
+      - /var/run/dbus:/var/run/dbus:ro  # Bluetooth access
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    privileged: true  # Required for Bluetooth access
+    network_mode: host  # Required for Bluetooth scanning
+    restart: unless-stopped
+
+  # Dashboard (Optional)
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: bluetooth-dashboard
+    command: python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run(host='0.0.0.0', port=8050)"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-bluetooth_heatmap}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "${DASHBOARD_PORT:-8050}:8050"
+    volumes:
+      - ./config:/app/config:ro
+      - ./exports:/app/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bluetooth-network
+
+  # Grafana (Optional - for monitoring)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: bluetooth-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+    depends_on:
+      - postgres
+    networks:
+      - bluetooth-network
+
+networks:
+  bluetooth-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:

@@ -1,0 +1,84 @@
+# オフィスルームのレイアウト定義
+facility:
+  name: "オフィスルーム"
+  type: "office"
+  address: "ビル内1室"
+  dimensions:
+    width: 20  # メートル（横幅）
+    height: 15  # メートル（縦幅）
+    floors: 1
+
+# ゾーン定義
+zones:
+  - id: "entrance"
+    name: "入口"
+    type: "entrance"
+    floor: 1
+    polygon: [[8, 13], [12, 13], [12, 15], [8, 15]]  # 上部中央
+    capacity: 5
+    
+  - id: "president_room"
+    name: "社長室"
+    type: "private_office"
+    floor: 1
+    polygon: [[0, 8], [8, 8], [8, 15], [0, 15]]  # 左側
+    capacity: 5
+    category: "executive"
+    
+  - id: "open_office"
+    name: "オフィススペース"
+    type: "open_space"
+    floor: 1
+    polygon: [[0, 0], [20, 0], [20, 13], [8, 13], [8, 8], [0, 8]]  # L字型のメインスペース
+    capacity: 30
+    category: "workspace"
+
+# Bluetooth受信機配置（仮想的な配置）
+receivers:
+  - id: "rcv_001"
+    name: "入口受信機"
+    position: [19, 11]
+    floor: 1
+    range: 10
+    status: "active"
+    
+  - id: "rcv_002"
+    name: "社長室受信機"
+    position: [4, 12.5]
+    floor: 1
+    range: 10
+    status: "active"
+    
+  - id: "rcv_003"
+    name: "中央受信機"
+    position: [10, 5]
+    floor: 1
+    range: 15
+    status: "active"
+    
+  - id: "rcv_004"
+    name: "ミーティングエリア受信機"
+    position: [13, 12.5]
+    floor: 1
+    range: 10
+    status: "active"
+
+# 家具・設備の配置（オプション）
+furniture:
+  - id: "president_desk"
+    name: "社長デスク"
+    type: "desk"
+    position: [4, 13]
+    size: [2, 1]
+    
+  - id: "meeting_table"
+    name: "会議テーブル"
+    type: "table"
+    position: [13, 12.5]
+    size: [3, 1.5]
+    
+  - id: "work_desks"
+    name: "作業デスク群"
+    type: "desk_cluster"
+    position: [10, 5]
+    size: [8, 4]

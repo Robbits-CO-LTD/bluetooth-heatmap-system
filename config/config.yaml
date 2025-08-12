@@ -1,0 +1,162 @@
+# 施設情報
+facility:
+  name: "オフィスルーム"
+  type: "office"
+  layout_file: "config/layouts/office_room.yaml"
+  dimensions:
+    width: 20  # メートル（横幅）
+    height: 15  # メートル（縦幅）
+
+# スキャン設定
+scanning:
+  interval: 5.0  # スキャン間隔（秒）
+  duration: 4.0  # スキャン時間（秒）
+  rssi_threshold: -100  # RSSI閾値（より弱い信号も検出）
+  device_timeout: 30.0  # デバイスタイムアウト（秒）
+  max_devices: 1000  # 最大追跡デバイス数
+  debug_mode: true  # デバッグモード（詳細ログ出力）
+  use_single_scanner: true  # 単一スキャナーモード（Windowsでは推奨）
+
+# 位置計算設定
+positioning:
+  algorithm: "trilateration"  # trilateration, fingerprinting, kalman
+  min_receivers: 3  # 最小受信機数
+  max_distance: 50.0  # 最大検出距離（メートル）
+  smoothing_factor: 0.7  # スムージング係数
+
+# 分析設定
+analysis:
+  trajectory:
+    smoothing_window: 5  # スムージングウィンドウサイズ
+    min_points: 10  # 最小軌跡ポイント数
+    interpolation_method: "linear"  # 補間方法
+
+  dwell_time:
+    min_duration: 10.0  # 最小滞留時間（秒）
+    zones_of_interest:
+      - "entrance"
+      - "vegetables"
+      - "meat_fish"
+      - "dairy"
+      - "cashier"
+
+  flow:
+    grid_size: 2.0  # グリッドサイズ（メートル）
+    direction_threshold: 0.5  # 方向閾値
+    min_flow_count: 5  # 最小フロー数
+
+  pattern:
+    algorithm: "dbscan"  # dbscan, kmeans, hierarchical
+    eps: 0.5  # DBSCAN epsilon
+    min_samples: 5  # DBSCAN最小サンプル数
+
+# 可視化設定
+visualization:
+  heatmap:
+    resolution: 0.5  # 解像度（メートル）
+    colormap: "hot"  # カラーマップ
+    opacity: 0.7  # 透明度
+    smoothing: true  # スムージング有効化
+    update_interval: 1.0  # 更新間隔（秒）
+
+  flow:
+    arrow_scale: 1.0  # 矢印スケール
+    arrow_width: 2.0  # 矢印幅
+    color_by_speed: true  # 速度による色分け
+    min_arrow_length: 0.5  # 最小矢印長
+
+  trajectory:
+    line_width: 2.0  # 線幅
+    fade_duration: 60.0  # フェード時間（秒）
+    show_confidence: true  # 信頼度表示
+    max_trajectories: 100  # 最大表示軌跡数
+
+# データベース設定
+database:
+  type: "postgresql"
+  host: "${DB_HOST}"
+  port: "${DB_PORT}"
+  name: "${DB_NAME}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  
+  pool:
+    min_size: 5
+    max_size: 20
+    
+  timescale:
+    enabled: "${TIMESCALE_ENABLED}"
+    retention_days: "${TIMESCALE_RETENTION_DAYS}"
+    chunk_interval: "1 day"
+
+# Redis設定
+redis:
+  host: "${REDIS_HOST}"
+  port: "${REDIS_PORT}"
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  decode_responses: true
+
+# API設定
+api:
+  host: "${API_HOST}"
+  port: "${API_PORT}"
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+  
+  auth:
+    secret_key: "${API_SECRET_KEY}"
+    algorithm: "${API_ALGORITHM}"
+    access_token_expire_minutes: "${API_ACCESS_TOKEN_EXPIRE_MINUTES}"
+
+# WebSocket設定
+websocket:
+  heartbeat_interval: 30  # ハートビート間隔（秒）
+  max_connections: 100  # 最大同時接続数
+
+# アラート設定
+alerts:
+  crowding:
+    enabled: true
+    threshold: 50  # 人/エリア
+    duration: 300  # 継続時間（秒）
+    
+  restricted_area:
+    enabled: true
+    notification_method: "websocket"  # email, websocket, both
+    
+  anomaly_detection:
+    enabled: true
+    sensitivity: 0.95  # 異常検知感度
+
+# レポート設定
+reports:
+  daily:
+    enabled: true
+    time: "23:00"
+    formats: ["pdf", "excel"]
+    
+  weekly:
+    enabled: true
+    day: "sunday"
+    time: "23:00"
+    
+  monthly:
+    enabled: false
+    day: 1
+    time: "00:00"
+
+# ログ設定
+logging:
+  level: "${LOG_LEVEL}"
+  file: "${LOG_FILE}"
+  max_size: 10485760  # 10MB
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# 性能設定
+performance:
+  batch_size: 100  # バッチ処理サイズ
+  cache_ttl: 300  # キャッシュTTL（秒）
+  max_workers: 4  # 最大ワーカー数

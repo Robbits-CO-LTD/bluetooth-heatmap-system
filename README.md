@@ -1,2 +1,284 @@
-# bluetooth-heatmap-system
-bluetoothをヒートマップで監視するシステムです。
+# Bluetooth動線分析ヒートマップシステム
+
+## 🎯 概要
+Bluetooth Low Energy (BLE) 信号を利用して、施設内の人の動きをリアルタイムで追跡・分析・可視化するプライバシー保護型モーショントラッキングシステムです。オフィス、スーパーマーケット、工場、倉庫などで利用可能です。
+
+## ✨ 主要機能
+
+### リアルタイム分析
+- **🚶 動線追跡**: 個々のデバイスの移動経路をリアルタイム追跡
+- **⏱️ 滞留分析**: エリア別の滞在時間と頻度を分析
+- **🗺️ ヒートマップ**: リアルタイムで混雑状況を可視化
+- **🔄 フロー分析**: 人の流れの方向と量を可視化
+
+### データ処理
+- **🔐 プライバシー保護**: MAC アドレスを即座にハッシュ化
+- **📊 ゾーンベース分析**: 座標ではなくゾーン単位で処理（高速化）
+- **🎯 スマート位置推定**: 黄金角アルゴリズムによる均等配置
+- **📈 自動レポート生成**: 定期的な分析レポート作成
+
+## 🛠️ 技術スタック
+
+| カテゴリ | 技術 | 用途 |
+|---------|------|------|
+| **言語** | Python 3.10+ | メインアプリケーション |
+| **BLE通信** | Bleak | Bluetooth スキャニング |
+| **API** | FastAPI | REST API + WebSocket |
+| **可視化** | Plotly, Dash | リアルタイムダッシュボード |
+| **データ処理** | NumPy, Pandas, SciPy | 位置計算・分析 |
+| **データベース** | PostgreSQL | データ永続化 |
+| **時系列DB** | TimescaleDB (オプション) | 時系列データ最適化 |
+| **非同期処理** | asyncio | 並行処理 |
+
+## 📦 インストール
+
+### 前提条件
+- ✅ Python 3.10 以上
+- ✅ Windows 10+ (Bluetooth 4.0+ 対応)
+- ✅ PostgreSQL 14+ (オプション - なくても動作可能)
+- ✅ Bluetooth アダプター
+
+### クイックセットアップ
+
+#### 1. リポジトリのクローン
+```bash
+git clone https://github.com/your-org/bluetooth-heatmap-system.git
+cd bluetooth-heatmap-system
+```
+
+#### 2. Python 仮想環境のセットアップ
+```bash
+# 仮想環境の作成
+python -m venv venv
+
+# 仮想環境の有効化（Windows）
+venv\Scripts\activate
+
+# 依存関係のインストール
+pip install -r requirements.txt
+```
+
+#### 3. 環境設定
+```bash
+# 設定ファイルのコピー
+copy .env.example .env
+
+# .env ファイルを編集（メモ帳などで開いて編集）
+# 最低限、以下を設定：
+# - DB_HOST=localhost
+# - DB_NAME=bluetooth_tracking
+# - DB_USER=your_username
+# - DB_PASSWORD=your_password
+# - TIMESCALE_ENABLED=false  # TimescaleDB がない場合
+```
+
+#### 4. データベース初期化（オプション）
+```bash
+# データベースがある場合のみ
+python scripts/init_db.py
+
+# データベース状態の確認
+python scripts/init_db.py --check
+
+# データベースのリセット（注意：全データ削除）
+python scripts/init_db.py --reset
+```
+
+## 🚀 使用方法
+
+### 基本的な起動手順
+
+#### 1. API サーバーの起動（データベースなしでも動作）
+```bash
+# 別ターミナルで実行
+uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
+
+# API ドキュメントを確認
+# ブラウザで開く: http://localhost:8000/docs
+```
+
+#### 2. ダッシュボードの起動（スタンドアロン）
+```bash
+# 別ターミナルで実行
+python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
+
+# ダッシュボードを確認
+# ブラウザで開く: http://localhost:8050
+```
+
+#### 3. メインアプリケーションの起動（フル機能）
+```bash
+# Bluetooth スキャニングとデータ処理を開始
+python src/main.py
+
+# 注意: Windows では管理者権限が必要な場合があります
+```
+
+### 🔍 Bluetooth テスト
+```bash
+# Bluetooth スキャニングのテスト
+python -m src.core.scanner
+
+# Windows で Bluetooth サービスの確認
+net start bthserv
+```
+
+## 📡 API エンドポイント
+
+### デバイス管理
+| メソッド | エンドポイント | 説明 |
+|---------|--------------|------|
+| GET | `/api/v1/devices/` | デバイス一覧（最大10000件） |
+| GET | `/api/v1/devices/active` | アクティブデバイスのサマリー |
+| GET | `/api/v1/devices/{device_id}` | 特定デバイスの詳細 |
+| GET | `/api/v1/devices/{device_id}/trajectory` | デバイスの移動軌跡 |
+
+### 分析
+| メソッド | エンドポイント | 説明 |
+|---------|--------------|------|
+| GET | `/api/v1/trajectories/` | 軌跡一覧 |
+| GET | `/api/v1/dwell-time/{zone_id}` | ゾーン滞留時間 |
+| GET | `/api/v1/flow/matrix` | ゾーン間遷移行列 |
+| GET | `/api/v1/heatmap/current` | 現在のヒートマップ |
+| GET | `/api/v1/analytics/summary` | 統合分析サマリー |
+
+### リアルタイム（WebSocket）
+| チャンネル | 更新間隔 | 内容 |
+|-----------|---------|------|
+| `positions` | 1秒 | デバイス位置更新 |
+| `heatmap` | 5秒 | ゾーン密度更新 |
+| `analytics` | 10秒 | 統計情報更新 |
+| `alerts` | イベント駆動 | リアルタイムアラート |
+
+接続: `ws://localhost:8000/api/v1/realtime/ws`
+
+## 🏢 施設レイアウト設定
+
+現在のレイアウト: **オフィス** (20m × 15m)
+
+### ゾーン構成
+- 🚪 **entrance**: エントランス
+- 👔 **president_room**: 社長室
+- 💼 **open_office**: オープンオフィス
+
+新しいレイアウトを追加するには:
+1. `config/layouts/` に YAML ファイルを作成
+2. ゾーンをポリゴン座標で定義
+3. `config/config.yaml` で参照
+
+## ⚡ パフォーマンス最適化
+
+### 現在の最適化
+- ✅ **黄金角アルゴリズム**: デバイスの均等配置
+- ✅ **ゾーンベース処理**: 座標ではなくゾーン単位で集計
+- ✅ **バッチ処理**: 100件単位でのデータベース挿入
+- ✅ **非同期処理**: 4つの並行ループで効率的な処理
+
+### メモリ制限
+- デバイスごとの位置履歴: 最新100件
+- スキャナーの検出履歴: 最新1000件
+- API デフォルト取得数: 500件（最大10000件）
+
+## 🐛 トラブルシューティング
+
+### よくある問題と解決方法
+
+#### 1. デバイスが検出されない
+```bash
+# Bluetooth サービスの確認（Windows）
+net start bthserv
+
+# 管理者権限で実行
+# PowerShell を管理者として実行してから
+python src/main.py
+```
+
+#### 2. デバイスが1点に集中する問題
+**解決済み**: 黄金角アルゴリズムにより均等配置を実現
+
+#### 3. 100台以上のデバイスが表示されない問題
+**解決済み**: API リミットを500件（最大10000件）に拡張
+
+#### 4. データベース接続エラー
+```bash
+# PostgreSQL が起動していることを確認
+# TimescaleDB がない場合は .env で無効化
+TIMESCALE_ENABLED=false
+```
+
+#### 5. ImportError が発生
+```bash
+# PYTHONPATH を設定
+set PYTHONPATH=%cd%  # Windows
+export PYTHONPATH=$PWD  # Linux/Mac
+```
+
+## 📊 現在の実装状況
+
+### ✅ 完全実装済み
+- BLE スキャニング（Bleak）
+- デバイス管理・位置計算
+- 分析モジュール（軌跡、滞留、フロー）
+- REST API + WebSocket
+- リアルタイムダッシュボード
+- データベース統合
+
+### 🚧 部分実装/保留中
+- ユニット/統合テスト（基本的な3テストのみ）
+- Docker 設定（ファイルはあるが未テスト）
+- Web フロントエンド（ダッシュボードとは別）
+- デスクトップ GUI アプリケーション
+
+## 📝 プロジェクト構造
+
+```
+blueooth-heatmap-system/
+├── src/
+│   ├── main.py                 # メインアプリケーション
+│   ├── core/                   # コア機能
+│   │   ├── scanner.py          # BLE スキャニング
+│   │   ├── device_manager.py   # デバイス管理
+│   │   ├── position_calculator.py  # 位置計算
+│   │   └── data_integration.py # DB統合
+│   ├── analysis/               # 分析エンジン
+│   │   ├── trajectory_analyzer.py  # 軌跡分析
+│   │   ├── dwell_time_analyzer.py  # 滞留分析
+│   │   └── flow_analyzer.py        # フロー分析
+│   ├── api/                    # REST API
+│   │   ├── app.py              # FastAPI アプリ
+│   │   ├── routes/             # API ルート
+│   │   └── schemas/            # Pydantic モデル
+│   ├── visualization/          # 可視化
+│   │   ├── dashboard.py        # Dash ダッシュボード
+│   │   └── heatmap.py          # ヒートマップ生成
+│   └── database/               # データベース層
+│       ├── models.py           # SQLAlchemy モデル
+│       └── repositories.py     # リポジトリパターン
+├── config/
+│   ├── config.yaml             # メイン設定
+│   └── layouts/                # 施設レイアウト
+│       └── office_room.yaml    # オフィスレイアウト
+├── scripts/
+│   └── init_db.py              # DB初期化スクリプト
+├── tests/                      # テスト（未実装）
+├── CLAUDE.md                   # Claude Code 用ドキュメント
+├── requirements.txt            # Python 依存関係
+├── .env.example                # 環境変数テンプレート
+└── README.md                   # このファイル
+```
+
+## 🔗 関連ドキュメント
+
+- [CLAUDE.md](./CLAUDE.md) - Claude Code 用の詳細ドキュメント
+- [設計書](./bluetooth-heatmap-design.md) - オリジナル設計書（日本語）
+- [実装状況](./docs/IMPLEMENTATION_STATUS.md) - 詳細な実装状況
+
+## 📧 サポート
+
+問題が発生した場合:
+1. [トラブルシューティング](#-トラブルシューティング)を確認
+2. `logs/motion_analysis.log` でエラーログを確認
+3. Issue を作成（GitHub）
+
+## 📄 ライセンス
+MIT License

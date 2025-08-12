@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(venvScripts:*)",
+      "Bash(venv\\\\Scripts\\\\python.exe scripts/init_db.py:*)",
+      "Bash(cmd /c:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": []
+  }
+}
