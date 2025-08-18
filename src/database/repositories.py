@@ -32,12 +32,23 @@ class BaseRepository:
 class DeviceRepository(BaseRepository):
     """デバイスリポジトリ"""
     
-    async def create(self, device_data: Dict) -> Device:
+    async def create(self, device_data: Dict) -> Optional[Device]:
         """デバイスを作成"""
-        device = Device(**device_data)
-        self.session.add(device)
-        await self.commit()
-        return device
+        try:
+            # 既存デバイスの確認
+            existing = await self.get_by_id(device_data.get('device_id'))
+            if existing:
+                self.logger.warning(f"Device {device_data.get('device_id')} already exists")
+                return None
+            
+            device = Device(**device_data)
+            self.session.add(device)
+            await self.commit()
+            return device
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to create device: {e}")
+            return None
         
     async def get_by_id(self, device_id: str) -> Optional[Device]:
         """IDでデバイスを取得"""
@@ -53,9 +64,15 @@ class DeviceRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
         
-    async def get_active_devices(self, minutes: int = 5) -> List[Device]:
+    async def get_active_devices(self, minutes: int = None, seconds: int = None) -> List[Device]:
         """アクティブなデバイスを取得"""
-        threshold = datetime.utcnow() - timedelta(minutes=minutes)
+        if seconds:
+            threshold = datetime.utcnow() - timedelta(seconds=seconds)
+        elif minutes:
+            threshold = datetime.utcnow() - timedelta(minutes=minutes)
+        else:
+            # デフォルト30秒（リアルタイム性を重視）
+            threshold = datetime.utcnow() - timedelta(seconds=30)
         result = await self.session.execute(
             select(Device)
             .where(Device.last_seen >= threshold)
@@ -107,6 +124,18 @@ class DeviceRepository(BaseRepository):
             delete(Device).where(Device.device_id == device_id)
         )
         await self.commit()
+        
+    async def delete_all(self) -> bool:
+        """全デバイスを削除"""
+        try:
+            await self.session.execute(delete(Device))
+            await self.commit()
+            self.logger.info("All devices deleted from database")
+            return True
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to delete all devices: {e}")
+            return False
 
 
 class TrajectoryRepository(BaseRepository):
@@ -148,6 +177,21 @@ class TrajectoryRepository(BaseRepository):
             
         result = await self.session.execute(query.order_by(Trajectory.start_time))
         return result.scalars().all()
+        
+    async def delete_all(self) -> bool:
+        """全軌跡データを削除"""
+        try:
+            # まず軌跡ポイントを削除
+            await self.session.execute(delete(TrajectoryPoint))
+            # 次に軌跡を削除
+            await self.session.execute(delete(Trajectory))
+            await self.commit()
+            self.logger.info("All trajectories deleted from database")
+            return True
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to delete all trajectories: {e}")
+            return False
         
     async def get_zone_trajectories(self, zone_id: str,
                                    date: datetime) -> List[Trajectory]:
@@ -198,6 +242,18 @@ class DetectionRepository(BaseRepository):
         
         result = await self.session.execute(query.order_by(Detection.timestamp.desc()))
         return result.scalars().all()
+        
+    async def delete_all(self) -> bool:
+        """全検知データを削除"""
+        try:
+            await self.session.execute(delete(Detection))
+            await self.commit()
+            self.logger.info("All detections deleted from database")
+            return True
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to delete all detections: {e}")
+            return False
     
     async def get_receiver_detections(self, receiver_id: str,
                                      start_time: Optional[datetime] = None,
@@ -216,6 +272,18 @@ class DetectionRepository(BaseRepository):
 
 class DwellTimeRepository(BaseRepository):
     """滞留時間リポジトリ"""
+    
+    async def delete_all(self) -> bool:
+        """全滞留時間データを削除"""
+        try:
+            await self.session.execute(delete(DwellTime))
+            await self.commit()
+            self.logger.info("All dwell time data deleted from database")
+            return True
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to delete all dwell time data: {e}")
+            return False
     
     async def create(self, dwell_data: Dict) -> DwellTime:
         """滞留記録を作成"""
@@ -316,6 +384,18 @@ class DwellTimeRepository(BaseRepository):
 
 class FlowRepository(BaseRepository):
     """フロー分析リポジトリ"""
+    
+    async def delete_all(self) -> bool:
+        """全フローデータを削除"""
+        try:
+            await self.session.execute(delete(FlowMatrix))
+            await self.commit()
+            self.logger.info("All flow data deleted from database")
+            return True
+        except Exception as e:
+            await self.rollback()
+            self.logger.error(f"Failed to delete all flow data: {e}")
+            return False
     
     async def update_flow_matrix(self, from_zone: str, to_zone: str,
                                 timestamp: datetime):

@@ -60,17 +60,61 @@ class DataIntegration:
             'db_errors': 0
         }
         
-    async def connect(self) -> bool:
-        """データベースに接続"""
+    async def connect(self, reset_on_start: bool = True) -> bool:
+        """データベースに接続
+        
+        Args:
+            reset_on_start: 起動時にデータベースをリセットするか
+        """
         try:
             self.db_connection = DatabaseConnection(self.config)
             await self.db_connection.connect()
             self.is_connected = True
             self.logger.info("Database connected successfully")
+            
+            # 起動時にデータベースをリセット
+            if reset_on_start:
+                await self.reset_database()
+            
             return True
         except Exception as e:
             self.logger.error(f"Failed to connect to database: {e}")
             self.is_connected = False
+            return False
+            
+    async def reset_database(self) -> bool:
+        """データベース内のBluetoothデバイス情報をリセット"""
+        if not self.is_connected:
+            self.logger.warning("Database not connected, cannot reset")
+            return False
+            
+        try:
+            async with self.get_session() as session:
+                # デバイステーブルをクリア
+                device_repo = DeviceRepository(session)
+                await device_repo.delete_all()
+                
+                # 軌跡データをクリア
+                trajectory_repo = TrajectoryRepository(session)
+                await trajectory_repo.delete_all()
+                
+                # 検知データをクリア
+                detection_repo = DetectionRepository(session)
+                await detection_repo.delete_all()
+                
+                # 滞留時間データをクリア
+                dwell_repo = DwellTimeRepository(session)
+                await dwell_repo.delete_all()
+                
+                # フローデータをクリア
+                flow_repo = FlowRepository(session)
+                await flow_repo.delete_all()
+                
+                self.logger.info("Database reset completed - all Bluetooth device data cleared")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to reset database: {e}")
             return False
             
     async def disconnect(self):
@@ -90,11 +134,35 @@ class DataIntegration:
         async with self.db_connection.get_session() as session:
             yield session
             
+    async def remove_device(self, device_id: str) -> bool:
+        """
+        デバイスをデータベースから削除
+        
+        Args:
+            device_id: デバイスID
+            
+        Returns:
+            削除に成功したかどうか
+        """
+        if not self.is_connected:
+            return False
+            
+        try:
+            async with self.get_session() as session:
+                device_repo = DeviceRepository(session)
+                await device_repo.delete(device_id)
+                self.logger.info(f"Device {device_id} removed from database")
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to remove device {device_id}: {e}")
+            return False
+    
     async def save_device(self, device_id: str, mac_address: str, 
                           device_name: Optional[str] = None,
                           position: Optional[Tuple[float, float]] = None,
                           zone_id: Optional[str] = None,
-                          rssi: Optional[float] = None) -> bool:
+                          rssi: Optional[float] = None,
+                          check_duplicate: bool = True) -> bool:
         """
         デバイス情報を保存
         
@@ -105,6 +173,7 @@ class DataIntegration:
             position: 現在位置
             zone_id: 現在のゾーン
             rssi: 信号強度
+            check_duplicate: 重複チェックを行うか
             
         Returns:
             保存成功したかどうか
@@ -116,8 +185,12 @@ class DataIntegration:
             async with self.get_session() as session:
                 device_repo = DeviceRepository(session)
                 
-                # 既存デバイスを確認
-                existing = await device_repo.get_by_id(device_id)
+                # 重複チェック
+                if check_duplicate:
+                    # 既存デバイスを確認
+                    existing = await device_repo.get_by_id(device_id)
+                else:
+                    existing = None
                 
                 if existing:
                     # 既存デバイスを更新
@@ -135,6 +208,7 @@ class DataIntegration:
                         update_data['signal_strength'] = rssi
                         
                     await device_repo.update(device_id, update_data)
+                    self.logger.info(f"[UPDATED] デバイス {device_id[:8]}... を更新 (検出回数: {existing.total_detections + 1})")
                 else:
                     # 新規デバイスを作成
                     device_data = {
@@ -150,7 +224,26 @@ class DataIntegration:
                         'signal_strength': rssi,
                         'total_detections': 1
                     }
-                    await device_repo.create(device_data)
+                    created = await device_repo.create(device_data)
+                    if created:
+                        self.logger.info(f"[SAVED] デバイス {device_id[:8]}... をデータベースに保存")
+                    else:
+                        # UNIQUE制約違反の場合、既存デバイスを更新
+                        existing = await device_repo.get_by_id(device_id)
+                        if existing:
+                            update_data = {
+                                'last_seen': datetime.utcnow(),
+                                'total_detections': existing.total_detections + 1
+                            }
+                            if position:
+                                update_data['current_x'] = position[0]
+                                update_data['current_y'] = position[1]
+                            if zone_id:
+                                update_data['current_zone'] = zone_id
+                            if rssi:
+                                update_data['signal_strength'] = rssi
+                            await device_repo.update(device_id, update_data)
+                            self.logger.info(f"[UPDATED] デバイス {device_id[:8]}... を更新 (競合状態から回復)")
                 
                 self.stats['devices_saved'] += 1
                 return True

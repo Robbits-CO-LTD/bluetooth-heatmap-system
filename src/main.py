@@ -84,7 +84,9 @@ class MotionAnalysisSystem:
             # データベース統合を初期化
             self.logger.info("データベース統合を初期化中...")
             self.data_integration = DataIntegration(self.config.get('database', {}))
-            db_connected = await self.data_integration.connect()
+            # 起動時にデータベースをリセット
+            reset_on_start = self.config.get('database', {}).get('reset_on_start', True)
+            db_connected = await self.data_integration.connect(reset_on_start=reset_on_start)
             
             if db_connected:
                 self.logger.info("[OK] データベース接続成功")
@@ -127,6 +129,8 @@ class MotionAnalysisSystem:
                 # 単一受信機
                 self.scanner = BluetoothScanner(scan_config)
                 self.logger.info("単一スキャナーモード")
+                # スキャナーのデバイス情報をクリア
+                self.scanner.clear_all_devices()
                 
             self.logger.info("初期化完了")
             
@@ -200,6 +204,9 @@ class MotionAnalysisSystem:
         
         while self.is_running:
             try:
+                # 新しいスキャンサイクルを開始
+                self.device_manager.start_new_scan()
+                
                 # デバイス検出
                 if isinstance(self.scanner, MultiReceiverScanner):
                     all_devices = self.scanner.get_all_devices()
@@ -209,6 +216,15 @@ class MotionAnalysisSystem:
                     if devices:
                         self.logger.info(f"処理中: {len(devices)}個のデバイス")
                     await self._process_single_receiver_data(devices)
+                
+                # 未検出デバイスをクリーンアップ
+                removed_devices = self.device_manager.cleanup_undetected_devices()
+                if removed_devices:
+                    self.logger.info(f"削除されたデバイス: {len(removed_devices)}個")
+                    # データベースからも削除
+                    if self.data_integration and self.data_integration.is_connected:
+                        for device_id in removed_devices:
+                            await self.data_integration.remove_device(device_id)
                     
                 await asyncio.sleep(scan_interval)
                 
@@ -296,12 +312,22 @@ class MotionAnalysisSystem:
         num_devices = len(devices)
         
         for idx, device in enumerate(devices):
-            # デバイス登録
-            device_obj = self.device_manager.register_device(
+            # デバイス登録（重複チェック付き）
+            new_device = self.device_manager.register_device(
                 mac_address=device.mac_address,
                 device_name=device.device_name,
-                rssi=device.rssi
+                rssi=device.rssi,
+                check_duplicate=True
             )
+            
+            # デバイスIDを取得
+            device_id = self.device_manager._anonymize_mac(device.mac_address)
+            
+            # デバイスが存在しない場合はスキップ
+            if device_id not in self.device_manager.devices:
+                continue
+            
+            device_obj = self.device_manager.devices[device_id]
             
             # 簡易的な位置推定（単一受信機では正確な位置は計算できない）
             # RSSIベースの距離推定のみ
@@ -317,8 +343,8 @@ class MotionAnalysisSystem:
             receiver_y = facility_height / 2
             
             # デバイスを円形に均等配置
-            # MACアドレスのハッシュを使って一貫した位置を生成
-            mac_hash = hashlib.md5(device.mac_address.encode()).hexdigest()
+            # デバイスIDのハッシュを使って一貫した位置を生成
+            mac_hash = hashlib.md5(device_obj.device_id.encode()).hexdigest()
             # ハッシュ値から一意の角度を生成（0から2πの範囲）
             hash_value = int(mac_hash[:8], 16)
             # デバイスごとに異なる角度を確実に割り当て
@@ -348,9 +374,10 @@ class MotionAnalysisSystem:
             estimated_x = receiver_x + adjusted_distance * math.cos(angle)
             estimated_y = receiver_y + adjusted_distance * math.sin(angle)
             
-            # デバッグ用ログ（最初の5台のみ）
-            if len(self.device_manager.devices) <= 5:
-                self.logger.info(f"Device position - MAC: {device.mac_address[:8]}..., Angle: {angle:.2f} rad, Distance: {adjusted_distance:.2f}m, Position: ({estimated_x:.2f}, {estimated_y:.2f})")
+            # デバッグ用ログ（アクティブデバイスが5台以下の場合）
+            active_devices = self.device_manager.get_current_active_devices()
+            if len(active_devices) <= 5:
+                self.logger.info(f"Device position - ID: {device_obj.device_id[:8]}..., Angle: {angle:.2f} rad, Distance: {adjusted_distance:.2f}m, Position: ({estimated_x:.2f}, {estimated_y:.2f})")
             
             # 施設の境界内に制限
             estimated_x = max(0, min(estimated_x, facility_width))
@@ -364,19 +391,20 @@ class MotionAnalysisSystem:
             # デバイスマネージャーを更新
             self.device_manager.update_position(device_obj.device_id, position, zone_id)
             
-            # データベースにデバイスを保存（推定位置付き）
+            # データベースにデバイスを保存/更新
             if self.data_integration and self.data_integration.is_connected:
+                # new_deviceがnot Noneの場合は新規デバイス、Noneの場合は既存デバイス
                 saved = await self.data_integration.save_device(
                     device_id=device_obj.device_id,
                     mac_address=device_obj.mac_address,
                     device_name=device_obj.device_name,
                     position=position,
                     zone_id=zone_id,
-                    rssi=device.rssi
+                    rssi=device.rssi,
+                    check_duplicate=True  # 重複チェックを有効化
                 )
-                if saved:
-                    self.logger.info(f"[SAVED] デバイス {device_obj.device_id} をデータベースに保存")
-                else:
+                # DataIntegration側でログ出力するため、ここでは出力しない
+                if not saved:
                     self.logger.warning(f"[FAILED] デバイス {device_obj.device_id} の保存に失敗")
             else:
                 self.logger.debug(f"データベース未接続: デバイス {device_obj.device_id} はメモリのみ")
@@ -515,6 +543,10 @@ class MotionAnalysisSystem:
         trajectory_stats = self.trajectory_analyzer.get_statistics()
         dwell_stats = self.dwell_analyzer.get_statistics()
         flow_stats = self.flow_analyzer.get_statistics()
+        
+        # アクティブデバイス数を更新
+        active_devices = self.device_manager.get_current_active_devices()
+        device_stats['active_devices'] = len(active_devices)
         
         log_msg = (
             f"統計情報 - "

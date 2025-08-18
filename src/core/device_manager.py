@@ -43,6 +43,8 @@ class DeviceManager:
         # デバイス管理
         self.devices: Dict[str, Device] = {}  # device_id -> Device
         self.mac_to_id: Dict[str, str] = {}  # mac_address -> device_id
+        self.current_scan_devices: Set[str] = set()  # 現在のスキャンで検出されたデバイスID
+        self.previous_scan_devices: Set[str] = set()  # 前回のスキャンで検出されたデバイスID
         
         # プライバシー設定
         self.anonymize = config.get('anonymize', True)
@@ -93,36 +95,74 @@ class DeviceManager:
         
     def register_device(self, mac_address: str, 
                        device_name: Optional[str] = None,
-                       rssi: int = 0) -> Device:
+                       rssi: int = 0,
+                       check_duplicate: bool = True) -> Optional[Device]:
         """
-        デバイスを登録
+        デバイスを登録（重複チェック付き）
         
         Args:
             mac_address: MACアドレス
             device_name: デバイス名
             rssi: 信号強度
+            check_duplicate: 重複チェックを行うか
             
         Returns:
-            登録されたデバイス
+            新規登録されたデバイス（既存デバイスの場合はNone）
         """
+        # デバイスIDを生成
+        device_id = self._anonymize_mac(mac_address)
+        
+        # 現在のスキャンで既に処理済みかチェック
+        if check_duplicate and device_id in self.current_scan_devices:
+            # スキャン内で再度検出された場合もカウントアップ
+            if device_id in self.devices:
+                device = self.devices[device_id]
+                device.last_seen = datetime.now()
+                device.total_detections += 1
+            self.logger.debug(f"Device {device_id} already processed in current scan")
+            return None
+        
         # 既存デバイスチェック
         if mac_address in self.mac_to_id:
-            device_id = self.mac_to_id[mac_address]
-            device = self.devices[device_id]
+            existing_device_id = self.mac_to_id[mac_address]
             
-            # 最終検出時刻を更新
+            # 同じデバイスIDの場合のみ更新（重複防止）
+            if existing_device_id == device_id:
+                device = self.devices[device_id]
+                
+                # 最終検出時刻を更新
+                device.last_seen = datetime.now()
+                device.total_detections += 1
+                
+                # デバイス名が提供されていて、まだ設定されていない場合は更新
+                if device_name and not device.device_name:
+                    device.device_name = device_name
+                    device.device_type = self._detect_device_type(device_name)
+                
+                # 現在のスキャンで検出されたことを記録
+                self.current_scan_devices.add(device_id)
+                
+                self.logger.debug(f"Existing device updated: {device_id}")
+                return None  # 既存デバイスの場合はNoneを返す
+            else:
+                # 異なるデバイスIDの場合は登録しない（重複防止）
+                self.logger.warning(f"Duplicate MAC address with different ID: {mac_address}")
+                return None
+            
+        # 既にデバイスIDが存在する場合も重複チェック
+        if device_id in self.devices:
+            self.logger.debug(f"Device {device_id} already exists")
+            self.current_scan_devices.add(device_id)
+            # 既存デバイスを更新
+            device = self.devices[device_id]
             device.last_seen = datetime.now()
             device.total_detections += 1
-            
-            # デバイス名が提供されていて、まだ設定されていない場合は更新
             if device_name and not device.device_name:
                 device.device_name = device_name
                 device.device_type = self._detect_device_type(device_name)
-            
-            return device
+            return None  # 既存デバイスの場合はNoneを返す
             
         # 新規デバイス作成
-        device_id = self._anonymize_mac(mac_address)
         device_type = self._detect_device_type(device_name)
         
         device = Device(
@@ -130,7 +170,7 @@ class DeviceManager:
             mac_address=mac_address if not self.anonymize else "",
             first_seen=datetime.now(),
             last_seen=datetime.now(),
-            device_name=device_name,  # デバイス名を追加
+            device_name=device_name,
             device_type=device_type,
             is_anonymous=self.anonymize,
             total_detections=1
@@ -139,6 +179,7 @@ class DeviceManager:
         # 登録
         self.devices[device_id] = device
         self.mac_to_id[mac_address] = device_id
+        self.current_scan_devices.add(device_id)
         
         # 統計更新
         self.stats['total_devices'] += 1
@@ -173,6 +214,63 @@ class DeviceManager:
                     return device_type
                     
         return "unknown"
+    
+    def start_new_scan(self):
+        """新しいスキャンサイクルを開始"""
+        # 前回のスキャンデバイスを保存
+        self.previous_scan_devices = self.current_scan_devices.copy()
+        # 現在のスキャンデバイスをクリア
+        self.current_scan_devices.clear()
+        self.logger.debug(f"New scan cycle started. Previous devices: {len(self.previous_scan_devices)}")
+    
+    def cleanup_undetected_devices(self) -> List[str]:
+        """未検出デバイスをクリーンアップ
+        
+        Returns:
+            削除されたデバイスIDのリスト
+        """
+        # 前回のスキャンにあって今回のスキャンにないデバイスを特定
+        undetected_devices = self.previous_scan_devices - self.current_scan_devices
+        removed_devices = []
+        
+        for device_id in undetected_devices:
+            if device_id in self.devices:
+                device = self.devices[device_id]
+                # 最後の検出から一定時間経過していたら削除
+                time_since_last_seen = (datetime.now() - device.last_seen).total_seconds()
+                
+                # 即座に削除（よりリアルタイムな表示のため）
+                if time_since_last_seen > 5:  # 5秒以上検出されない場合（リアルタイム性向上）
+                    # MACアドレスマッピングを削除
+                    for mac, did in list(self.mac_to_id.items()):
+                        if did == device_id:
+                            del self.mac_to_id[mac]
+                            break
+                    
+                    # デバイスを削除
+                    del self.devices[device_id]
+                    removed_devices.append(device_id)
+                    
+                    # 統計更新
+                    self.stats['total_devices'] -= 1
+                    if device.device_type in self.stats['device_types']:
+                        self.stats['device_types'][device.device_type] -= 1
+                    
+                    self.logger.info(f"Device removed (not detected): {device_id}")
+        
+        return removed_devices
+    
+    def get_current_active_devices(self) -> List[Device]:
+        """現在アクティブなデバイスのみを取得
+        
+        Returns:
+            現在のスキャンで検出されたデバイスのリスト
+        """
+        active_devices = []
+        for device_id in self.current_scan_devices:
+            if device_id in self.devices:
+                active_devices.append(self.devices[device_id])
+        return active_devices
         
     def update_position(self, device_id: str, 
                        position: Tuple[float, float],

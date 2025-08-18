@@ -4,234 +4,216 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Bluetooth-based motion analysis and heatmap system for tracking visitor movement in facilities (offices, supermarkets, factories, warehouses) using BLE signals. Provides real-time tracking, trajectory analysis, dwell time analysis, and flow visualization while maintaining privacy through MAC address anonymization.
+Bluetooth-based real-time motion tracking and heatmap system for facilities (offices, supermarkets, warehouses). Tracks visitor movement using BLE signals with privacy-preserving MAC address hashing. Provides trajectory analysis, dwell time metrics, flow visualization, and real-time alerts.
 
 ## System Architecture
 
 ### Core Data Flow
 ```
-BLE Devices → Scanner(s) → DeviceManager → PositionCalculator → Analysis Modules → Database/API → Visualization
+BLE Devices → Scanner → DeviceManager → PositionCalculator → Analysis Modules → Database/API → Dashboard
 ```
 
-### Async Processing Architecture
-The system uses 4 concurrent async loops in `src/main.py`:
-1. **Scanning Loop** (`_scanning_loop`): BLE device detection at configurable intervals
-2. **Analysis Loop** (`_analysis_loop`): Position processing and analysis module updates
-3. **Maintenance Loop** (`_maintenance_loop`): Hourly data cleanup
-4. **Reporting Loop** (`_reporting_loop`): Periodic report generation
+### Concurrent Processing (src/main.py)
+- **Scanning Loop** (3s interval): BLE device detection and position updates
+- **Analysis Loop** (10s): Trajectory/dwell time/flow analysis
+- **Maintenance Loop** (1h): Database cleanup, old device removal
+- **Reporting Loop** (30m): Analytics report generation
 
-### Key Architectural Decisions
-- **Zone-Centric Analysis**: All business logic operates on zones rather than raw coordinates to reduce data volume and improve query performance
-- **Multi-Receiver Positioning**: Auto-detects receiver count and switches between distance-only (1 receiver) and trilateration (3+ receivers)
-- **Privacy-First**: MAC addresses immediately hashed, original MACs never stored
-- **Event-Driven**: Non-blocking I/O for all external operations with graceful degradation
-- **Position Distribution**: Uses golden angle algorithm for even device distribution when using single receiver
+### Key Design Decisions
+- **Zone-based processing**: Reduces data volume, improves performance
+- **Golden angle positioning**: Distributes devices evenly with single receiver
+- **Real-time cleanup**: Devices removed after 5s without detection
+- **Duplicate prevention**: UNIQUE constraint on device_id, application-level checks
 
 ## Essential Commands
 
-### Development Setup
+### Quick Start
 ```bash
-# Virtual environment and dependencies
+# Setup
 python -m venv venv
-venv\Scripts\activate  # Windows
+venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 
-# Environment configuration
-copy .env.example .env  # Then edit .env with your settings
-
-# Database initialization (requires PostgreSQL, TimescaleDB optional)
-python scripts/init_db.py
-python scripts/init_db.py --check  # Check database status
-python scripts/init_db.py --reset  # Reset database (destructive)
-```
-
-### Running Components
-```bash
-# API Server (works without database for testing)
+# Run without database (testing)
 uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
-# OpenAPI docs: http://localhost:8000/docs
 
-# Dashboard (standalone)
+# Dashboard
 python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
-# Access at: http://localhost:8050
 
-# Main Application (requires full setup)
+# Full system (requires PostgreSQL)
+python scripts/init_db.py
 python src/main.py
-
-# WebSocket test endpoints
-GET /api/v1/realtime/status  # Check WebSocket status
-WS  /api/v1/realtime/ws      # WebSocket connection
 ```
 
-### Testing Bluetooth
+### Development
 ```bash
-# Test Bluetooth scanning directly
-python -m src.core.scanner
+# Tests
+make test                    # Run all tests
+pytest tests/unit -v        # Unit tests only
+pytest --cov=src tests/     # With coverage
 
-# Check Bluetooth service (Windows)
-net start bthserv
+# Code quality
+make format                  # black + isort
+make lint                   # flake8 + mypy
+make clean                  # Remove temp files
+
+# Database
+make init-db                # Initialize
+make check-db              # Check status
+make reset-db              # Reset (destructive)
+
+# Services
+make run-api               # API server
+make run-dashboard         # Dashboard
+make run-all              # All services
 ```
 
-## Configuration Hierarchy
+## Configuration
 
-1. **config/config.yaml**: System-wide settings
-   - Contains `${ENV_VAR}` placeholders resolved from .env
-   - Scanning parameters, positioning algorithms, analysis thresholds
-   
-2. **config/layouts/**: Facility geometry files
-   - `office_room.yaml`: Office layout (20m x 15m)
-   - `supermarket_a.yaml`: Supermarket layout example
-   - Zone polygons determine position assignment
-   - Receiver count affects positioning capability (≥3 for trilateration)
-   
-3. **.env**: Deployment-specific secrets
-   - Database credentials, API keys, service endpoints
-   - Copy from .env.example and customize
-   - Set `TIMESCALE_ENABLED=false` if TimescaleDB not available
+### config/config.yaml
+- Scanning: interval=3s, duration=2.5s, rssi_threshold=-100
+- Device cleanup: 5s timeout (was 10s)
+- API defaults: active_only=True, 30s window
 
-## API Structure
+### config/layouts/office_room.yaml
+- 20m x 15m office with 3 zones:
+  - entrance: Entry point
+  - open_office: Main workspace
+  - president_room: Executive office
 
-### Route Organization
+### .env Variables
 ```
-src/api/
-├── app.py              # FastAPI application, lifespan management
-├── websocket.py        # WebSocket connection manager
-├── schemas/            # Pydantic models for request/response
-│   ├── device.py       # Device, trajectory schemas
-│   ├── analytics.py    # Analysis result schemas
-│   └── heatmap.py      # Heatmap data schemas
-└── routes/             # API endpoints
-    ├── devices.py      # Device CRUD operations (limit: 500 default, 10000 max)
-    ├── trajectories.py # Trajectory tracking
-    ├── dwell_time.py   # Dwell time analysis
-    ├── flow.py         # Flow matrix and transitions
-    ├── heatmap.py      # Heatmap generation
-    ├── analytics.py    # Combined analytics
-    ├── reports.py      # Report generation
-    └── realtime.py     # WebSocket real-time updates
+DB_HOST=localhost
+DB_NAME=bluetooth_tracking
+DB_USER=postgres
+DB_PASSWORD=your_password
+TIMESCALE_ENABLED=false    # Set true if TimescaleDB installed
 ```
 
-### WebSocket Channels
-Subscribe to channels via WebSocket at `/api/v1/realtime/ws`:
-- `positions`: Device position updates (1s interval)
-- `heatmap`: Zone density updates (5s interval)
-- `analytics`: Statistical updates (10s interval)
-- `alerts`: Real-time alerts (event-driven)
+## API Endpoints
 
-## Database Architecture
+### Device Management
+- `GET /api/v1/devices?active_only=true` - Returns devices seen in last 30s
+- `GET /api/v1/devices/{device_id}` - Single device details
+- Default limit: 500 (max: 10000)
 
-### TimescaleDB Hypertables (Optional)
-- `trajectory_points`: Time-series position data with automatic chunking
-- `detections`: Raw BLE detection events
-- `heatmap_data`: Aggregated density grids
+### Analytics
+- `GET /api/v1/heatmap/current` - Current density map
+- `GET /api/v1/dwell-time/current` - Zone dwell times
+- `GET /api/v1/flow/transitions` - Zone-to-zone movements
+- `WS /api/v1/realtime/ws` - WebSocket for live updates
 
-### Repository Pattern
-All database operations go through repositories in `src/database/repositories.py`:
-- Direct SQL avoided in business logic
-- Batch operations for performance (threshold: 100)
-- Automatic connection pooling (5-20 connections)
-- Default query limits: 500 items (was 100)
+## Dashboard Features
 
-## Adding New Features
+### KPI Cards
+- **Active Devices**: Currently detected (30s window)
+- **Average Dwell Time**: Calculated from first_seen to last_seen
+- **Total Visitors**: Unique devices today
+- **Alerts**: Long dwell (>30min), crowding (>10/zone), anomaly (>50 total)
 
-### New Analysis Module
-1. Create analyzer in `src/analysis/` following existing patterns
-2. Initialize in `MotionAnalysisSystem.__init__`
-3. Add to appropriate processing loop or create new one
-4. Update `_log_statistics` for metrics
-5. Add config section to `config.yaml`
+### Visualizations
+- **Heatmap**: Real-time device positions with Gaussian overlay
+- **Zone Occupancy**: Bar chart with color-coded thresholds
+- **Visitor Trend**: 1-hour timeline, 5-minute intervals
+- **Popular Routes**: Top 5 zone transitions
 
-### New API Endpoint
-1. Create route module in `src/api/routes/`
-2. Define Pydantic schemas in `src/api/schemas/`
-3. Implement repository methods if needed
-4. Register route in `src/api/app.py`
-5. Test via OpenAPI docs at `/docs`
+## Recent Fixes & Improvements
 
-### New Position Algorithm
-1. Add method to `PositionCalculator` class
-2. Update `calculate_position` method's algorithm selection
-3. Add config parameters to `positioning` section
-4. Document receiver requirements
+### Device Duplicate Prevention
+- DeviceManager.register_device() returns None for existing devices
+- DataIntegration logs [SAVED] for new, [UPDATED] for existing
+- Database UNIQUE constraint on device_id field
 
-### New Facility Layout
-1. Create YAML file in `config/layouts/`
-2. Define zones with polygons (list of [x, y] coordinates)
-3. Add receivers if using multiple (≥3 for trilateration)
-4. Update config.yaml to reference new layout
+### Real-time Responsiveness
+- Cleanup timeout: 10s → 5s
+- API active window: 5min → 30s
+- Scan interval: 5s → 3s
+- Default active_only=true for API
+
+### Dashboard Enhancements
+- Added alert system with severity levels
+- Implemented visitor trend graph
+- Added popular routes visualization
+- Fixed average dwell time calculation
+
+## Common Issues & Solutions
+
+### No Devices Detected
+```bash
+net start bthserv           # Start Bluetooth service (Windows)
+# Check config: rssi_threshold=-100 (more sensitive)
+# Run as Administrator if needed
+```
+
+### Database Connection Failed
+```bash
+# PostgreSQL not required for testing
+# Set TIMESCALE_ENABLED=false in .env
+# API and dashboard work without database
+```
+
+### Import Errors
+```bash
+# Ensure venv activated
+venv\Scripts\activate
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Device Count Growing
+- Fixed: Devices now removed after 5s without detection
+- API returns only active devices by default
+- Dashboard shows real-time counts
+
+## Performance Optimization
+
+### Current Limits
+- DeviceManager: 100 positions/device history
+- Scanner: 1000 detection buffer
+- API: 500 devices default (10k max)
+- Batch inserts: 100 point threshold
+
+### Position Calculation
+- Single receiver uses golden angle (2.39996 rad) for distribution
+- RSSI range: -90 to -30 dBm → distance mapping
+- Time-based variation for natural movement simulation
 
 ## Windows-Specific Notes
 
-- Bluetooth requires Windows 10+ with Bluetooth 4.0+
-- May need Administrator privileges for BLE access
-- `WindowsProactorEventLoopPolicy` set in main.py for Bluetooth compatibility
-- All internal paths use forward slashes
-- Use `cmd` commands in documentation examples
+- Requires Windows 10+ with Bluetooth 4.0+
+- Uses WindowsProactorEventLoopPolicy for async Bluetooth
+- Administrator privileges may be needed for BLE
+- All paths use forward slashes internally
 
-## Performance Considerations
+## Incomplete Features (TODO)
 
-### Memory Limits
-- DeviceManager keeps last 100 positions per device
-- Scanner maintains last 1000 detections
-- TrajectoryAnalyzer clears points after finalization
+Several API endpoints return mock data:
+- `/api/v1/flow/*` - Flow analysis endpoints
+- `/api/v1/analytics/visitor-trend` - Historical trends
+- `/api/v1/reports/*` - Report generation
+- Unit tests coverage (<5% implemented)
+- Docker deployment (untested)
 
-### Database Optimization
-- TimescaleDB chunks by day with 90-day retention (when enabled)
-- Batch inserts for trajectory points (100 point threshold)
-- Zone-based aggregation reduces raw data volume
-- API returns up to 500 devices by default (configurable to 10000)
+## Architecture Patterns
 
-### Position Calculation
-- Single receiver: Golden angle distribution for device separation
-- RSSI normalization: -90 to -30 dBm mapped to distance
-- Position updates include time-based variation for natural movement
+### Repository Pattern
+All database operations through `src/database/repositories.py`:
+- No direct SQL in business logic
+- Automatic connection pooling
+- Batch operations for performance
 
-## Common Issues
+### Device Lifecycle
+1. Scanner detects MAC address
+2. DeviceManager hashes MAC → device_id
+3. Position calculated (golden angle if single receiver)
+4. Zone assigned based on polygon boundaries
+5. Analysis modules update metrics
+6. API/Dashboard display real-time data
+7. Cleanup after timeout
 
-### API Import Errors
-- Ensure working directory is project root
-- Check PYTHONPATH includes project root
-- Verify virtual environment is activated
-
-### No BLE Devices Detected
-- Check RSSI threshold in config (default -90)
-- Verify Bluetooth enabled and receivers configured
-- Try running with Administrator privileges on Windows
-- Check Bluetooth service: `net start bthserv`
-
-### Database Connection Failed
-- Verify PostgreSQL running and .env credentials correct
-- TimescaleDB is optional: set `TIMESCALE_ENABLED=false` if not installed
-- Check connection pooling settings if under load
-
-### Devices Clustering at One Point
-- Fixed in latest version using golden angle distribution
-- Check that position calculation logs show different angles
-- Verify API returns current_x and current_y values
-
-### Device Count Stops at 100
-- Fixed: Default limit increased to 500
-- Can request up to 10000 with `limit` parameter
-- Check both API and repository limits
-
-## Current Implementation Status
-
-### ✅ Fully Implemented
-- Core BLE scanning and device management
-- Position calculation with golden angle distribution
-- Analysis modules (trajectory, dwell time, flow)
-- Database layer with repository pattern
-- FastAPI with all endpoints and WebSocket
-- Visualization (heatmap, flow, dashboard)
-- Office room layout configuration
-
-### 🚧 Partial/Pending
-- Unit and integration tests (only 3 tests exist)
-- Docker configuration (files exist but untested)
-- Web frontend (separate from dashboard)
-- Desktop GUI application
-
-## Design Document Reference
-
-Original design document: `bluetooth-heatmap-design.md` (Japanese)
-Implementation status: `docs/IMPLEMENTATION_STATUS.md`
+### Alert System
+Monitors three conditions:
+- Long dwell: >30min (medium), >60min (high)
+- Crowding: >10/zone (low), >15/zone (medium)
+- Anomaly: >50 total devices (high)

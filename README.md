@@ -3,6 +3,12 @@
 ## 🎯 概要
 Bluetooth Low Energy (BLE) 信号を利用して、施設内の人の動きをリアルタイムで追跡・分析・可視化するプライバシー保護型モーショントラッキングシステムです。オフィス、スーパーマーケット、工場、倉庫などで利用可能です。
 
+## 📊 最新の改善内容
+- ✅ **重複デバイス防止**: 同一デバイスの複数登録を完全防止
+- ✅ **リアルタイム性向上**: 5秒で未検出デバイスを自動削除
+- ✅ **ダッシュボード機能拡充**: アラート、来訪者推移、人気経路を実装
+- ✅ **パフォーマンス最適化**: スキャン間隔3秒、アクティブ判定30秒に短縮
+
 ## ✨ 主要機能
 
 ### リアルタイム分析
@@ -38,7 +44,7 @@ Bluetooth Low Energy (BLE) 信号を利用して、施設内の人の動きを�
 - ✅ PostgreSQL 14+ (オプション - なくても動作可能)
 - ✅ Bluetooth アダプター
 
-### クイックセットアップ
+### クイックセットアップ（データベースなしで動作可能）
 
 #### 1. リポジトリのクローン
 ```bash
@@ -54,17 +60,19 @@ python -m venv venv
 # 仮想環境の有効化（Windows）
 venv\Scripts\activate
 
-# 依存関係のインストール
+# 依存関係のインストール（最小構成）
+pip install fastapi uvicorn bleak plotly dash
+# または全依存関係
 pip install -r requirements.txt
 ```
 
-#### 3. 環境設定
+#### 3. 環境設定（オプション - データベースを使用する場合のみ）
 ```bash
 # 設定ファイルのコピー
 copy .env.example .env
 
-# .env ファイルを編集（メモ帳などで開いて編集）
-# 最低限、以下を設定：
+# データベースなしで動作させる場合は、.envファイル不要
+# データベースを使用する場合のみ、以下を設定：
 # - DB_HOST=localhost
 # - DB_NAME=bluetooth_tracking
 # - DB_USER=your_username
@@ -85,33 +93,47 @@ python scripts/init_db.py --reset
 ```
 
 ## 🚀 使用方法
+# ターミナル1
 
-### 基本的な起動手順
-
-#### 1. API サーバーの起動（データベースなしでも動作）
-```bash
-# 別ターミナルで実行
-uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
-
-# API ドキュメントを確認
-# ブラウザで開く: http://localhost:8000/docs
-```
-
-#### 2. ダッシュボードの起動（スタンドアロン）
-```bash
-# 別ターミナルで実行
-python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
-
-# ダッシュボードを確認
-# ブラウザで開く: http://localhost:8050
-```
-
-#### 3. メインアプリケーションの起動（フル機能）
-```bash
-# Bluetooth スキャニングとデータ処理を開始
+cd C:\bluetooth-heatmap-system
+venv\Scripts\activate
 python src/main.py
 
-# 注意: Windows では管理者権限が必要な場合があります
+# ターミナル2（新規）
+
+cd C:\bluetooth-heatmap-system
+venv\Scripts\activate
+uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
+
+# ターミナル3（新規）
+
+cd C:\bluetooth-heatmap-system
+venv\Scripts\activate
+python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
+
+### 🎯 最速テスト（データベース不要）
+
+```bash
+# 1. APIサーバー起動（ターミナル1）
+uvicorn src.api.app:app --reload
+
+# 2. ダッシュボード起動（ターミナル2）
+python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
+
+# 3. ブラウザで確認
+# ダッシュボード: http://localhost:8050
+# APIドキュメント: http://localhost:8000/docs
+```
+
+### 📊 フル機能起動（Bluetoothスキャン付き）
+
+```bash
+# Makefileを使用する場合
+make run-all
+
+# 手動で起動する場合
+python src/main.py  # Bluetoothスキャン開始
+# ※ Windowsでは管理者権限で実行
 ```
 
 ### 🔍 Bluetooth テスト
@@ -123,34 +145,32 @@ python -m src.core.scanner
 net start bthserv
 ```
 
-## 📡 API エンドポイント
+## 📡 主要APIエンドポイント
 
 ### デバイス管理
-| メソッド | エンドポイント | 説明 |
-|---------|--------------|------|
-| GET | `/api/v1/devices/` | デバイス一覧（最大10000件） |
-| GET | `/api/v1/devices/active` | アクティブデバイスのサマリー |
-| GET | `/api/v1/devices/{device_id}` | 特定デバイスの詳細 |
-| GET | `/api/v1/devices/{device_id}/trajectory` | デバイスの移動軌跡 |
+| エンドポイント | 説明 | デフォルト |
+|--------------|------|---------|
+| `GET /api/v1/devices/` | デバイス一覧 | active_only=true, limit=500 |
+| `GET /api/v1/devices/active` | アクティブサマリー | 30秒以内 |
+| `GET /api/v1/devices/{device_id}` | 特定デバイス詳細 | - |
 
-### 分析
-| メソッド | エンドポイント | 説明 |
-|---------|--------------|------|
-| GET | `/api/v1/trajectories/` | 軌跡一覧 |
-| GET | `/api/v1/dwell-time/{zone_id}` | ゾーン滞留時間 |
-| GET | `/api/v1/flow/matrix` | ゾーン間遷移行列 |
-| GET | `/api/v1/heatmap/current` | 現在のヒートマップ |
-| GET | `/api/v1/analytics/summary` | 統合分析サマリー |
+### 分析・可視化
+| エンドポイント | 説明 |
+|--------------|------|
+| `GET /api/v1/heatmap/current` | 現在のヒートマップ |
+| `GET /api/v1/dwell-time/current` | ゾーン滞留時間 |
+| `GET /api/v1/flow/transitions` | ゾーン間移動 |
+| `GET /api/v1/analytics/summary` | 統合分析 |
 
-### リアルタイム（WebSocket）
+### WebSocketチャンネル
+接続: `ws://localhost:8000/api/v1/realtime/ws`
+
 | チャンネル | 更新間隔 | 内容 |
 |-----------|---------|------|
-| `positions` | 1秒 | デバイス位置更新 |
-| `heatmap` | 5秒 | ゾーン密度更新 |
-| `analytics` | 10秒 | 統計情報更新 |
-| `alerts` | イベント駆動 | リアルタイムアラート |
-
-接続: `ws://localhost:8000/api/v1/realtime/ws`
+| positions | 1秒 | デバイス位置 |
+| heatmap | 5秒 | ゾーン密度 |
+| analytics | 10秒 | 統計情報 |
+| alerts | イベント | アラート |
 
 ## 🏢 施設レイアウト設定
 

@@ -9,10 +9,11 @@ facility:
 
 # スキャン設定
 scanning:
-  interval: 5.0  # スキャン間隔（秒）
-  duration: 4.0  # スキャン時間（秒）
+  interval: 3.0  # スキャン間隔（秒） - リアルタイム性を高めるため3秒に短縮
+  duration: 2.5  # スキャン時間（秒）
   rssi_threshold: -100  # RSSI閾値（より弱い信号も検出）
   device_timeout: 30.0  # デバイスタイムアウト（秒）
+  duplicate_detection_window: 10.0  # 重複検知ウィンドウ（秒）
   max_devices: 1000  # 最大追跡デバイス数
   debug_mode: true  # デバッグモード（詳細ログ出力）
   use_single_scanner: true  # 単一スキャナーモード（Windowsでは推奨）
@@ -79,6 +80,7 @@ database:
   name: "${DB_NAME}"
   user: "${DB_USER}"
   password: "${DB_PASSWORD}"
+  reset_on_start: true  # アプリ起動時にデータベースをリセット
   
   pool:
     min_size: 5

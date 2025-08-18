@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 async def get_devices(
     skip: int = Query(0, ge=0, description="スキップ数"),
     limit: int = Query(500, ge=1, le=10000, description="取得数"),
-    active_only: bool = Query(False, description="アクティブのみ"),
+    active_only: bool = Query(True, description="アクティブのみ"),  # デフォルトTrueに変更
     device_repo: DeviceRepository = Depends(get_device_repository)
 ):
     """
@@ -36,7 +36,8 @@ async def get_devices(
     """
     try:
         if active_only:
-            devices = await device_repo.get_active_devices(minutes=5)
+            # リアルタイム性を高めるたち30秒以内のデバイスのみ
+            devices = await device_repo.get_active_devices(seconds=30)
             # device_idで重複を除去
             unique_devices = {}
             for device in devices:
@@ -90,7 +91,8 @@ async def get_active_devices(
     アクティブなデバイスのサマリーを取得
     """
     try:
-        active_devices = await device_repo.get_active_devices(minutes=5)
+        # リアルタイム性を高めるたち30秒以内のデバイスのみ
+        active_devices = await device_repo.get_active_devices(seconds=30)
         
         # ゾーン分布を集計
         zone_distribution = {}

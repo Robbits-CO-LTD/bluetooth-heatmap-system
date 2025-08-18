@@ -55,10 +55,12 @@ class BluetoothScanner:
         self.scan_duration = config.get('duration', 5.0)
         self.rssi_threshold = config.get('rssi_threshold', -90)
         self.device_timeout = config.get('device_timeout', 30.0)
+        self.duplicate_detection_window = config.get('duplicate_detection_window', 10.0)  # 重複検知ウィンドウ
         
         # デバイスキャッシュ
         self.detected_devices: Dict[str, DetectedDevice] = {}
         self.device_history: List[DetectedDevice] = []
+        self.recent_detections: Dict[str, datetime] = {}  # 最近の検知タイムスタンプ
         
         # スキャン状態
         self.is_scanning = False
@@ -127,7 +129,19 @@ class BluetoothScanner:
                 
                 # デバイス名（Noneの場合は"Unknown"）
                 device_name = device.name if device.name else "Unknown Device"
-                    
+                
+                # 重複検知のチェック
+                mac_addr = device.address
+                if mac_addr in self.recent_detections:
+                    time_since_last = (current_time - self.recent_detections[mac_addr]).total_seconds()
+                    if time_since_last < self.duplicate_detection_window:
+                        # 短時間で同じデバイスを検知した場合はスキップ
+                        self.logger.debug(
+                            f"Skipping duplicate: {mac_addr} "
+                            f"(last seen {time_since_last:.1f}s ago)"
+                        )
+                        continue
+                
                 # デバイス情報を作成
                 detected_device = DetectedDevice(
                     mac_address=device.address,
@@ -142,6 +156,7 @@ class BluetoothScanner:
                 # キャッシュに保存
                 self.detected_devices[device.address] = detected_device
                 self.device_history.append(detected_device)
+                self.recent_detections[device.address] = current_time  # 最近の検知時刻を記録
                 detected_count += 1
                 
                 self.logger.info(
@@ -176,6 +191,16 @@ class BluetoothScanner:
         for mac in expired_devices:
             del self.detected_devices[mac]
             self.logger.debug(f"Device timeout: {mac}")
+            
+        # 古い重複検知記録も削除
+        duplicate_threshold = current_time - timedelta(seconds=self.duplicate_detection_window * 2)
+        expired_recent = [
+            mac for mac, timestamp in self.recent_detections.items()
+            if timestamp < duplicate_threshold
+        ]
+        
+        for mac in expired_recent:
+            del self.recent_detections[mac]
             
         # 履歴のサイズを制限（直近1000件）
         if len(self.device_history) > 1000:
@@ -224,6 +249,13 @@ class BluetoothScanner:
         """
         # TODO: 位置計算後にゾーン判定を実装
         return []
+        
+    def clear_all_devices(self) -> None:
+        """全デバイス情報をクリア"""
+        self.detected_devices.clear()
+        self.device_history.clear()
+        self.recent_detections.clear()
+        self.logger.info("All device information cleared")
         
     def get_statistics(self) -> Dict:
         """統計情報を取得"""
