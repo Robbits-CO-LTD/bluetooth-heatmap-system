@@ -94,22 +94,24 @@ python scripts/init_db.py --reset
 
 ## 🚀 使用方法
 # ターミナル1
-
+```bash
 cd C:\bluetooth-heatmap-system
 venv\Scripts\activate
 python src/main.py
+```
 
 # ターミナル2（新規）
-
+```bash
 cd C:\bluetooth-heatmap-system
 venv\Scripts\activate
 uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
-
+```
 # ターミナル3（新規）
-
+```bash
 cd C:\bluetooth-heatmap-system
 venv\Scripts\activate
 python -c "from src.visualization.dashboard import Dashboard; Dashboard({}).run()"
+```
 
 ### 🎯 最速テスト（データベース不要）
 
